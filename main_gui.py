@@ -10,6 +10,7 @@ import traceback
 import datetime
 import json
 import ctypes
+import time
 
 
 def _relaunch_without_console() -> None:
@@ -31,7 +32,8 @@ def _relaunch_without_console() -> None:
 _relaunch_without_console()
 
 from PySide6.QtCore import (
-    Qt, QThread, QTimer, Signal, Slot, QObject, QEvent,
+    Qt, QThread, QTimer, Signal, Slot, QObject, QEvent, QRectF,
+    QVariantAnimation, QEasingCurve, QPointF,
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -45,7 +47,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QFont, QIcon, QAction, QPixmap,
     QTextCursor, QTextDocument, QTextBlockFormat,
-    QPalette, QColor,
+    QPalette, QColor, QPainter, QPen, QFontDatabase, QPainterPath,
 )
 
 from business import (
@@ -63,6 +65,22 @@ def _app_icon() -> QIcon:
         if os.path.isfile(icon_path):
             return QIcon(icon_path)
     return QIcon()
+
+
+def _load_app_font() -> QFont:
+    """Load the bundled Smiley Sans font when available."""
+    font_path = resource_path(
+        os.path.join("assets", "fonts", "SmileySans-Oblique.ttf")
+    )
+    try:
+        font_id = QFontDatabase.addApplicationFont(font_path)
+        if font_id >= 0:
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if families:
+                return QFont(families[0], 11)
+    except Exception:
+        pass
+    return QFont("Microsoft YaHei UI", 11)
 
 
 def _chat_label_html(
@@ -352,7 +370,7 @@ QMainWindow {
 }
 QWidget {
     color: #0d0d0d;
-    font-size: 13px;
+    font-size: 14px;
 }
 QWidget#sidebar {
     background-color: #ffffff;
@@ -369,7 +387,7 @@ QPushButton {
     color: #0d0d0d;
     border: 1px solid #d9d9e3;
     border-radius: 8px;
-    padding: 7px 16px;
+    padding: 8px 18px;
     font-weight: 500;
 }
 QPushButton:hover {
@@ -389,7 +407,7 @@ QPushButton#primaryButton {
     color: #ffffff;
     border: 1px solid #0d0d0d;
     border-radius: 8px;
-    padding: 8px 20px;
+    padding: 9px 22px;
     font-weight: 600;
 }
 QPushButton#primaryButton:hover {
@@ -408,7 +426,7 @@ QPushButton[card="true"] {
     background-color: #ffffff;
     border: 1px solid #e5e5ea;
     border-radius: 10px;
-    font-size: 14px;
+    font-size: 15px;
 }
 QPushButton[card="true"]:hover {
     border-color: #10a37f;
@@ -419,7 +437,7 @@ QPushButton#settingsButton {
     border: 1px solid #d9d9e3;
     color: #0d0d0d;
     border-radius: 8px;
-    padding: 9px 16px;
+    padding: 10px 18px;
     font-weight: 600;
     text-align: left;
 }
@@ -431,7 +449,7 @@ QLineEdit, QTextEdit, QTextBrowser, QSpinBox, QComboBox {
     background-color: #ffffff;
     border: 1px solid #d9d9e3;
     border-radius: 8px;
-    padding: 6px 10px;
+    padding: 8px 12px;
     selection-background-color: #b7e4d7;
 }
 QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus {
@@ -453,7 +471,7 @@ QGroupBox {
     border: 1px solid #e5e5ea;
     border-radius: 10px;
     margin-top: 12px;
-    padding: 12px;
+    padding: 14px;
     font-weight: 600;
 }
 QGroupBox::title {
@@ -475,7 +493,7 @@ QTabBar::tab {
     background: transparent;
     border: none;
     border-bottom: 2px solid transparent;
-    padding: 10px 16px;
+    padding: 11px 18px;
     color: #6e6e80;
     font-weight: 500;
 }
@@ -516,32 +534,37 @@ QToolTip {
     background-color: #0d0d0d;
     color: #ffffff;
     border: none;
-    padding: 6px 8px;
+    padding: 8px 10px;
 }
 QLabel#chatHeader {
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 600;
     color: #0d0d0d;
 }
 QLabel#mutedLabel {
     color: #6e6e80;
-    font-size: 12px;
+    font-size: 13px;
 }
 QLabel#chatPlaceholder {
     color: #b5b5bd;
+    font-size: 14px;
+}
+QLabel#quizStatusLabel {
+    color: #10a37f;
     font-size: 13px;
+    padding: 4px 0;
 }
 QLabel#chatBubbleUser {
     background-color: #10a37f;
     color: #ffffff;
     border-radius: 14px;
-    padding: 10px 14px;
+    padding: 11px 16px;
 }
 QLabel#chatBubbleAssistant {
     background-color: #f0f0f4;
     color: #0d0d0d;
     border-radius: 14px;
-    padding: 10px 14px;
+    padding: 11px 16px;
 }
 QScrollArea#chatScroll {
     background: transparent;
@@ -551,14 +574,38 @@ QScrollArea#settingsScroll {
     background: transparent;
     border: none;
 }
+QFrame#chatInputContainer {
+    background-color: #f7f7f8;
+    border: 1px solid #d9d9e3;
+    border-radius: 14px;
+}
+QTextEdit#chatInputField {
+    background: transparent;
+    border: none;
+    padding: 8px 6px;
+}
+QPushButton#chatSendButton {
+    background-color: #10a37f;
+    color: #ffffff;
+    border: none;
+    border-radius: 17px;
+    font-size: 18px;
+    font-weight: 600;
+}
+QPushButton#chatSendButton:hover {
+    background-color: #0e8a6d;
+}
+QPushButton#chatSendButton:pressed {
+    background-color: #0b7059;
+}
 QListWidget#historyList {
     background-color: #ffffff;
     border: 1px solid #e5e5ea;
     border-radius: 8px;
-    padding: 4px;
+    padding: 5px;
 }
 QListWidget#historyList::item {
-    padding: 8px;
+    padding: 9px;
     border-bottom: 1px solid #f0f0f2;
 }
 QListWidget#historyList::item:selected {
@@ -572,7 +619,7 @@ QTextBrowser#answerBrowser {
     background-color: #f7f7f8;
     border: 1px solid #e8e8ec;
     border-radius: 12px;
-    padding: 10px 12px;
+    padding: 12px 14px;
 }
 """
 
@@ -582,7 +629,7 @@ QMainWindow {
 }
 QWidget {
     color: #e6e7eb;
-    font-size: 13px;
+    font-size: 14px;
 }
 QWidget#sidebar {
     background-color: #1f2026;
@@ -599,7 +646,7 @@ QPushButton {
     color: #e6e7eb;
     border: 1px solid #383a42;
     border-radius: 8px;
-    padding: 7px 16px;
+    padding: 8px 18px;
     font-weight: 500;
 }
 QPushButton:hover {
@@ -619,7 +666,7 @@ QPushButton#primaryButton {
     color: #ffffff;
     border: 1px solid #10a37f;
     border-radius: 8px;
-    padding: 8px 20px;
+    padding: 9px 22px;
     font-weight: 600;
 }
 QPushButton#primaryButton:hover {
@@ -638,7 +685,7 @@ QPushButton[card="true"] {
     background-color: #1f2026;
     border: 1px solid #2c2e35;
     border-radius: 10px;
-    font-size: 14px;
+    font-size: 15px;
 }
 QPushButton[card="true"]:hover {
     border-color: #10a37f;
@@ -649,7 +696,7 @@ QPushButton#settingsButton {
     border: 1px solid #383a42;
     color: #e6e7eb;
     border-radius: 8px;
-    padding: 9px 16px;
+    padding: 10px 18px;
     font-weight: 600;
     text-align: left;
 }
@@ -661,7 +708,7 @@ QLineEdit, QTextEdit, QTextBrowser, QSpinBox, QComboBox {
     background-color: #1a1b21;
     border: 1px solid #383a42;
     border-radius: 8px;
-    padding: 6px 10px;
+    padding: 8px 12px;
     selection-background-color: #1f5c4b;
 }
 QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus {
@@ -683,7 +730,7 @@ QGroupBox {
     border: 1px solid #2c2e35;
     border-radius: 10px;
     margin-top: 12px;
-    padding: 12px;
+    padding: 14px;
     font-weight: 600;
 }
 QGroupBox::title {
@@ -708,7 +755,7 @@ QTabBar::tab {
     background: transparent;
     border: none;
     border-bottom: 2px solid transparent;
-    padding: 10px 16px;
+    padding: 11px 18px;
     color: #9a9da8;
     font-weight: 500;
 }
@@ -749,32 +796,37 @@ QToolTip {
     background-color: #2c2e35;
     color: #e6e7eb;
     border: none;
-    padding: 6px 8px;
+    padding: 8px 10px;
 }
 QLabel#chatHeader {
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 600;
     color: #e6e7eb;
 }
 QLabel#mutedLabel {
     color: #9a9da8;
-    font-size: 12px;
+    font-size: 13px;
 }
 QLabel#chatPlaceholder {
     color: #6b6e78;
+    font-size: 14px;
+}
+QLabel#quizStatusLabel {
+    color: #4fd1ad;
     font-size: 13px;
+    padding: 4px 0;
 }
 QLabel#chatBubbleUser {
     background-color: #10a37f;
     color: #ffffff;
     border-radius: 14px;
-    padding: 10px 14px;
+    padding: 11px 16px;
 }
 QLabel#chatBubbleAssistant {
     background-color: #2c2e35;
     color: #e6e7eb;
     border-radius: 14px;
-    padding: 10px 14px;
+    padding: 11px 16px;
 }
 QScrollArea#chatScroll {
     background: transparent;
@@ -784,14 +836,38 @@ QScrollArea#settingsScroll {
     background: transparent;
     border: none;
 }
+QFrame#chatInputContainer {
+    background-color: #1a1b21;
+    border: 1px solid #383a42;
+    border-radius: 14px;
+}
+QTextEdit#chatInputField {
+    background: transparent;
+    border: none;
+    padding: 8px 6px;
+}
+QPushButton#chatSendButton {
+    background-color: #10a37f;
+    color: #ffffff;
+    border: none;
+    border-radius: 17px;
+    font-size: 18px;
+    font-weight: 600;
+}
+QPushButton#chatSendButton:hover {
+    background-color: #0e8a6d;
+}
+QPushButton#chatSendButton:pressed {
+    background-color: #0b7059;
+}
 QListWidget#historyList {
     background-color: #1a1b21;
     border: 1px solid #383a42;
     border-radius: 8px;
-    padding: 4px;
+    padding: 5px;
 }
 QListWidget#historyList::item {
-    padding: 8px;
+    padding: 9px;
     border-bottom: 1px solid #2c2e35;
 }
 QListWidget#historyList::item:selected {
@@ -805,7 +881,7 @@ QTextBrowser#answerBrowser {
     background-color: #1f2026;
     border: 1px solid #2c2e35;
     border-radius: 12px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     color: #e6e7eb;
 }
 """
@@ -925,6 +1001,151 @@ class ChineseContextMenuFilter(QObject):
         menu.exec(global_pos)
 
 
+class DarkModeSwitch(QCheckBox):
+    """A custom toggle switch styled like the web slider."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(52, 30)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("深色模式")
+        self._progress = 1.0 if self.isChecked() else 0.0
+        self._animation = QVariantAnimation(self)
+        self._animation.setDuration(200)
+        self._animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._animation.valueChanged.connect(self._on_animation_value)
+        self.toggled.connect(self._start_animation)
+
+    def _start_animation(self, checked: bool):
+        self._animation.stop()
+        self._animation.setStartValue(self._progress)
+        self._animation.setEndValue(1.0 if checked else 0.0)
+        self._animation.start()
+
+    def _on_animation_value(self, value):
+        self._progress = float(value)
+        self.update()
+
+    def hitButton(self, pos) -> bool:
+        return self.rect().contains(pos)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        width = self.width()
+        height = self.height()
+        track = QRectF(0.5, 0.5, width - 1, height - 1)
+
+        off = QColor("#9fccfa")
+        on = QColor("#0974f1")
+        track_color = QColor(
+            int(off.red() + (on.red() - off.red()) * self._progress),
+            int(off.green() + (on.green() - off.green()) * self._progress),
+            int(off.blue() + (on.blue() - off.blue()) * self._progress),
+        )
+        knob_diameter = height - 8
+        knob_x = 4 + self._progress * (width - height)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(track_color)
+        painter.drawRoundedRect(track, height / 2, height / 2)
+
+        knob_rect = QRectF(knob_x, 4, knob_diameter, knob_diameter)
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawEllipse(knob_rect)
+        painter.end()
+
+
+class AnimatedSendButton(QPushButton):
+    """Pill-shaped send button with an expanding hover fill."""
+
+    def __init__(self, parent=None):
+        super().__init__("发送", parent)
+        self.setFixedHeight(42)
+        self.setMinimumWidth(104)
+        self.setCursor(Qt.PointingHandCursor)
+        self._progress = 0.0
+        self._animation = QVariantAnimation(self)
+        self._animation.setDuration(220)
+        self._animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._animation.valueChanged.connect(self._on_animation_value)
+
+    def enterEvent(self, event):
+        self._animate_to(1.0)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._animate_to(0.0)
+        super().leaveEvent(event)
+
+    def _animate_to(self, target: float):
+        self._animation.stop()
+        self._animation.setStartValue(self._progress)
+        self._animation.setEndValue(target)
+        self._animation.start()
+
+    def _on_animation_value(self, value):
+        self._progress = float(value)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        rect = self.rect()
+        width = rect.width()
+        height = rect.height()
+        border_color = self.palette().color(QPalette.ColorRole.WindowText)
+        window_color = self.palette().color(QPalette.ColorRole.Window)
+        radius = height / 2
+
+        pill = QPainterPath()
+        pill.addRoundedRect(
+            QRectF(1, 1, width - 2, height - 2), radius, radius
+        )
+        painter.setClipPath(pill)
+        painter.setClipping(True)
+
+        painter.setPen(QPen(border_color, 2))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(
+            QRectF(1, 1, width - 2, height - 2), radius, radius
+        )
+
+        if self._progress > 0:
+            center = QPointF(width / 2, height / 2)
+            max_radius = (width ** 2 + height ** 2) ** 0.5 / 2
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(border_color)
+            painter.drawEllipse(
+                center, max_radius * self._progress, max_radius * self._progress
+            )
+
+        font = self.font()
+        font.setBold(True)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 3)
+        painter.setFont(font)
+        painter.setPen(window_color if self._progress >= 0.5 else border_color)
+        painter.drawText(rect, Qt.AlignCenter, self.text())
+        painter.end()
+
+
+class ChatInputEdit(QTextEdit):
+    """Input that sends on Enter and inserts a newline on Shift+Enter."""
+
+    sendRequested = Signal()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter) and not (
+            event.modifiers() & Qt.ShiftModifier
+        ):
+            self.sendRequested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 # ────────────────────────────────────────────
 #  Sidebar settings pane (always visible)
 # ────────────────────────────────────────────
@@ -936,6 +1157,7 @@ class SidebarWidget(QWidget):
     apiKeyChanged   = Signal(str, str)   # provider, key
     themeChanged    = Signal(bool)
     historySelected = Signal(dict)
+    newPlanRequested = Signal()
 
     MODEL_OPTIONS = {
         "groq":     ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "mixtral-8x7b-32768"],
@@ -1006,9 +1228,15 @@ class SidebarWidget(QWidget):
         self.api_key_edit.setToolTip("输入所选提供商的 API 密钥。")
         settings_layout.addWidget(self.api_key_edit)
 
-        self.dark_mode_check = QCheckBox("深色模式")
+        dark_row = QHBoxLayout()
+        dark_label = QLabel("深色模式")
+        dark_row.addWidget(dark_label)
+        dark_row.addStretch(1)
+
+        self.dark_mode_check = DarkModeSwitch()
         self.dark_mode_check.setChecked(_load_settings().get("dark_mode", False))
-        settings_layout.addWidget(self.dark_mode_check)
+        dark_row.addWidget(self.dark_mode_check)
+        settings_layout.addLayout(dark_row)
 
         settings_layout.addWidget(QLabel("关于"))
         about_text = QTextBrowser()
@@ -1042,6 +1270,10 @@ class SidebarWidget(QWidget):
         layout.addWidget(self.history_list, 1)
         self.refresh_history()
 
+        self.new_plan_btn = QPushButton("开始新的学习计划")
+        self.new_plan_btn.setObjectName("primaryButton")
+        layout.addWidget(self.new_plan_btn)
+
     def _toggle_settings(self):
         visible = not self.settings_scroll.isVisible()
         self.settings_scroll.setVisible(visible)
@@ -1069,6 +1301,7 @@ class SidebarWidget(QWidget):
         self.api_key_edit.textChanged.connect(self._on_api_key_changed)
         self.dark_mode_check.toggled.connect(self.themeChanged.emit)
         self.history_list.itemClicked.connect(self._on_history_clicked)
+        self.new_plan_btn.clicked.connect(self.newPlanRequested.emit)
 
     def _on_provider_changed(self, provider: str):
         self._update_model_options(provider)
@@ -1495,6 +1728,12 @@ class DashboardWidget(QWidget):
         self._tutor_response = ""
         self._rag_answer = ""
         self._chat_messages: list[tuple[str, str]] = []
+        self._thinking_row = None
+        self._thinking_timer = None
+        self._thinking_label = None
+        self._thinking_started = 0.0
+        self._quiz_timer = None
+        self._quiz_started = 0.0
         self._build_ui()
         if quiz:
             self.quiz_browser.setMarkdown(quiz)
@@ -1520,15 +1759,6 @@ class DashboardWidget(QWidget):
         tabs.addTab(self._build_tutor_tab(), " AI 辅导")
         tabs.addTab(self._build_rag_tab(), " 文档问答 (RAG)")
         outer.addWidget(tabs)
-
-        # bottom reset button
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        outer.addWidget(sep)
-
-        reset_btn = QPushButton("🏠 开始新的学习计划")
-        reset_btn.clicked.connect(self.resetRequested.emit)
-        outer.addWidget(reset_btn)
 
     # ── Tab 1: Learning Roadmap ──
     def _build_roadmap_tab(self):
@@ -1662,6 +1892,11 @@ class DashboardWidget(QWidget):
         generate_btn.clicked.connect(self._generate_quiz)
         layout.addWidget(generate_btn)
 
+        self.quiz_status_label = QLabel("正在为您生成测试 0 秒")
+        self.quiz_status_label.setObjectName("quizStatusLabel")
+        self.quiz_status_label.setVisible(False)
+        layout.addWidget(self.quiz_status_label)
+
         self.quiz_browser = QTextBrowser()
         layout.addWidget(self.quiz_browser)
 
@@ -1676,12 +1911,17 @@ class DashboardWidget(QWidget):
         difficulty = diff_map[self.difficulty_combo.currentText()]
         focus = self.focus_edit.text().strip() or "general"
         num = self.num_spin.value()
+        if self._workers:
+            QMessageBox.information(self, "请稍候", "上一个任务仍在运行，请稍候再试。")
+            return
+        self._start_quiz_status()
         self._run_worker(
             self._handler.generate_quiz, difficulty, focus, num,
             callback=self._on_quiz_generated
         )
 
     def _on_quiz_generated(self, result):
+        self._stop_quiz_status()
         self._current_quiz = result
         self.quiz_browser.setMarkdown(result)
         _save_plan_state(self._handler, self._analysis, self._roadmap, self._resources, result)
@@ -1738,20 +1978,23 @@ class DashboardWidget(QWidget):
         context_row.addWidget(self.tutor_context, 1)
         layout.addLayout(context_row)
 
-        input_row = QHBoxLayout()
-        input_row.setContentsMargins(16, 8, 16, 12)
-        input_row.setSpacing(8)
-        self.tutor_question = QTextEdit()
-        self.tutor_question.setPlaceholderText("例如：能举一个例子解释递归吗？")
-        self.tutor_question.setMaximumHeight(84)
-        input_row.addWidget(self.tutor_question, 1)
+        input_container = QFrame()
+        input_container.setObjectName("chatInputContainer")
+        input_layout = QHBoxLayout(input_container)
+        input_layout.setContentsMargins(12, 8, 8, 8)
+        input_layout.setSpacing(8)
 
-        ask_btn = QPushButton("发送")
-        ask_btn.setObjectName("primaryButton")
-        ask_btn.setMinimumWidth(84)
+        self.tutor_question = ChatInputEdit()
+        self.tutor_question.setObjectName("chatInputField")
+        self.tutor_question.setPlaceholderText("有问题，随便问")
+        self.tutor_question.setMaximumHeight(84)
+        self.tutor_question.sendRequested.connect(self._ask_tutor)
+        input_layout.addWidget(self.tutor_question, 1)
+
+        ask_btn = AnimatedSendButton()
         ask_btn.clicked.connect(self._ask_tutor)
-        input_row.addWidget(ask_btn, 0, Qt.AlignBottom)
-        layout.addLayout(input_row)
+        input_layout.addWidget(ask_btn, 0, Qt.AlignBottom)
+        layout.addWidget(input_container)
 
         return w
 
@@ -1778,6 +2021,7 @@ class DashboardWidget(QWidget):
     def _rebuild_chat_messages(self) -> None:
         if not hasattr(self, "tutor_chat_layout"):
             return
+        self._stop_thinking_status()
         while self.tutor_chat_layout.count() > 2:
             item = self.tutor_chat_layout.takeAt(1)
             if item.widget():
@@ -1806,19 +2050,94 @@ class DashboardWidget(QWidget):
         bar = self.tutor_scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
 
+    def _start_thinking_status(self):
+        self._stop_thinking_status()
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        self._thinking_label = QLabel("思考中 0 秒")
+        self._thinking_label.setObjectName("chatBubbleAssistant")
+        row.addWidget(self._thinking_label, 0, Qt.AlignLeft)
+        row.addStretch(1)
+        self._thinking_row = row
+        self.tutor_chat_layout.insertLayout(
+            max(0, self.tutor_chat_layout.count() - 1), row
+        )
+        self._thinking_started = time.monotonic()
+        self._thinking_timer = QTimer(self)
+        self._thinking_timer.setInterval(1000)
+        self._thinking_timer.timeout.connect(self._update_thinking_label)
+        self._thinking_timer.start()
+        self._update_thinking_label()
+        QTimer.singleShot(0, self._scroll_tutor_to_bottom)
+
+    def _update_thinking_label(self):
+        if self._thinking_label is None:
+            return
+        elapsed = int(time.monotonic() - self._thinking_started)
+        self._thinking_label.setText(f"思考中 {elapsed} 秒")
+
+    def _stop_thinking_status(self):
+        if self._thinking_timer is not None:
+            self._thinking_timer.stop()
+            self._thinking_timer.deleteLater()
+            self._thinking_timer = None
+        if self._thinking_row is not None and hasattr(self, "tutor_chat_layout"):
+            for i in range(self.tutor_chat_layout.count()):
+                if self.tutor_chat_layout.itemAt(i) is self._thinking_row:
+                    item = self.tutor_chat_layout.takeAt(i)
+                    while item.layout().count():
+                        child = item.layout().takeAt(0)
+                        widget = child.widget()
+                        if widget:
+                            widget.deleteLater()
+                    break
+        self._thinking_row = None
+        self._thinking_label = None
+
+    def _start_quiz_status(self):
+        self._stop_quiz_status()
+        self.quiz_status_label.setVisible(True)
+        self.quiz_status_label.setText("正在为您生成测试 0 秒")
+        self._quiz_started = time.monotonic()
+        self._quiz_timer = QTimer(self)
+        self._quiz_timer.setInterval(1000)
+        self._quiz_timer.timeout.connect(self._update_quiz_status)
+        self._quiz_timer.start()
+        self._update_quiz_status()
+
+    def _update_quiz_status(self):
+        if not getattr(self, "quiz_status_label", None):
+            return
+        elapsed = int(time.monotonic() - self._quiz_started)
+        self.quiz_status_label.setText(f"正在为您生成测试 {elapsed} 秒")
+
+    def _stop_quiz_status(self):
+        if self._quiz_timer is not None:
+            self._quiz_timer.stop()
+            self._quiz_timer.deleteLater()
+            self._quiz_timer = None
+        if getattr(self, "quiz_status_label", None) is not None:
+            self.quiz_status_label.setVisible(False)
+
     def _ask_tutor(self):
         question = self.tutor_question.toPlainText().strip()
         if not question:
             return
+        if self._workers:
+            QMessageBox.information(self, "请稍候", "上一个任务仍在运行，请稍候再试。")
+            return
         context = self.tutor_context.text().strip()
         self._append_chat_message("user", question)
         self.tutor_question.clear()
+        self._start_thinking_status()
         self._run_worker(
             self._handler.get_tutoring, question, context,
             callback=self._on_tutor_response
         )
 
     def _on_tutor_response(self, result):
+        self._stop_thinking_status()
         self._tutor_response = result
         self._append_chat_message("assistant", result)
 
@@ -1957,6 +2276,8 @@ class DashboardWidget(QWidget):
         worker.start()
 
     def _show_worker_error(self, msg: str):
+        self._stop_thinking_status()
+        self._stop_quiz_status()
         QMessageBox.critical(self, "错误", f"操作执行失败：\n{msg}")
 
 
@@ -2031,6 +2352,7 @@ class MainWindow(QMainWindow):
         )
         self.sidebar.themeChanged.connect(self._on_theme_changed)
         self.sidebar.historySelected.connect(self._open_history_plan)
+        self.sidebar.newPlanRequested.connect(self._reset_all)
 
     def _on_theme_changed(self, dark: bool):
         _apply_theme(dark, self)
@@ -2234,7 +2556,7 @@ def main():
     app.setApplicationName("StudyAssistant")
     app.setApplicationDisplayName("StudyAssistant")
     app.setStyle("Fusion")
-    app.setFont(QFont("Microsoft YaHei UI", 10))
+    app.setFont(_load_app_font())
     dark = bool(_load_settings().get("dark_mode", False))
     _apply_theme(dark)
     app.installEventFilter(ChineseContextMenuFilter(app))

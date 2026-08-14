@@ -9,6 +9,8 @@ if os.path.exists("assets/icon.png"):
     datas.append(("assets/icon.png", "assets"))
 if os.path.exists("assets/icon.ico"):
     datas.append(("assets/icon.ico", "assets"))
+if os.path.exists("assets/fonts/SmileySans-Oblique.ttf"):
+    datas.append(("assets/fonts/SmileySans-Oblique.ttf", "assets/fonts"))
 binaries = []
 hiddenimports = [
     "langchain_community.document_loaders.pdf",
