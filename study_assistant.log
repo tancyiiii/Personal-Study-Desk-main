@@ -166,3 +166,126 @@ UnicodeEncodeError: 'ascii' codec can't encode characters in position 7-13: ordi
            ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
 UnicodeEncodeError: 'ascii' codec can't encode characters in position 7-13: ordinal not in range(128)
 
+2026-08-14T09:02:52.373193 Traceback (most recent call last):
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\main_gui.py", line 439, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\business.py", line 154, in get_tutoring
+    resp = tutor.run(prompt, stream=False)
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\.venv\Lib\site-packages\phi\agent\agent.py", line 2074, in run
+    return next(resp)
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\.venv\Lib\site-packages\phi\agent\agent.py", line 1841, in _run
+    model_response = self.model.response(messages=messages_for_model)
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\.venv\Lib\site-packages\phi\model\openai\chat.py", line 599, in response
+    response: Union[ChatCompletion, ParsedChatCompletion] = self.invoke(messages=messages)
+                                                            ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\.venv\Lib\site-packages\phi\model\openai\chat.py", line 351, in invoke
+    return self.get_client().chat.completions.create(
+           ~~~~~~~~~~~~~~~^^
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\.venv\Lib\site-packages\phi\model\openai\chat.py", line 173, in get_client
+    return OpenAIClient(**client_params)
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\.venv\Lib\site-packages\openai\_client.py", line 137, in __init__
+    raise OpenAIError(
+        "The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable"
+    )
+openai.OpenAIError: The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable
+
+2026-08-14T11:17:00.450460 Traceback (most recent call last):
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\main_gui.py", line 204, in _load_plan_state
+    return json.load(f)
+           ~~~~~~~~~^^^
+  File "D:\conda\Lib\json\__init__.py", line 298, in load
+    return loads(fp.read(),
+        cls=cls, object_hook=object_hook,
+        parse_float=parse_float, parse_int=parse_int,
+        parse_constant=parse_constant, object_pairs_hook=object_pairs_hook, **kw)
+  File "D:\conda\Lib\json\__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "D:\conda\Lib\json\decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\conda\Lib\json\decoder.py", line 361, in raw_decode
+    obj, end = self.scan_once(s, idx)
+               ~~~~~~~~~~~~~~^^^^^^^^
+json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+
+2026-08-14T11:17:34.298426 Traceback (most recent call last):
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\main_gui.py", line 204, in _load_plan_state
+    return json.load(f)
+           ~~~~~~~~~^^^
+  File "D:\conda\Lib\json\__init__.py", line 298, in load
+    return loads(fp.read(),
+        cls=cls, object_hook=object_hook,
+        parse_float=parse_float, parse_int=parse_int,
+        parse_constant=parse_constant, object_pairs_hook=object_pairs_hook, **kw)
+  File "D:\conda\Lib\json\__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "D:\conda\Lib\json\decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\conda\Lib\json\decoder.py", line 361, in raw_decode
+    obj, end = self.scan_once(s, idx)
+               ~~~~~~~~~~~~~~^^^^^^^^
+json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+
+2026-08-14T11:23:46.752475 Traceback (most recent call last):
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\main_gui.py", line 204, in _load_plan_state
+    return json.load(f)
+           ~~~~~~~~~^^^
+  File "D:\conda\Lib\json\__init__.py", line 298, in load
+    return loads(fp.read(),
+        cls=cls, object_hook=object_hook,
+        parse_float=parse_float, parse_int=parse_int,
+        parse_constant=parse_constant, object_pairs_hook=object_pairs_hook, **kw)
+  File "D:\conda\Lib\json\__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "D:\conda\Lib\json\decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\conda\Lib\json\decoder.py", line 361, in raw_decode
+    obj, end = self.scan_once(s, idx)
+               ~~~~~~~~~~~~~~^^^^^^^^
+json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+
+2026-08-14T11:23:58.442089 Traceback (most recent call last):
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\main_gui.py", line 204, in _load_plan_state
+    return json.load(f)
+           ~~~~~~~~~^^^
+  File "D:\conda\Lib\json\__init__.py", line 298, in load
+    return loads(fp.read(),
+        cls=cls, object_hook=object_hook,
+        parse_float=parse_float, parse_int=parse_int,
+        parse_constant=parse_constant, object_pairs_hook=object_pairs_hook, **kw)
+  File "D:\conda\Lib\json\__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "D:\conda\Lib\json\decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\conda\Lib\json\decoder.py", line 361, in raw_decode
+    obj, end = self.scan_once(s, idx)
+               ~~~~~~~~~~~~~~^^^^^^^^
+json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+
+2026-08-14T11:27:38.771299 Traceback (most recent call last):
+  File "C:\Users\29813\Desktop\Personal-Study-Desk-main\main_gui.py", line 236, in _load_plan_state
+    return json.load(f)
+           ~~~~~~~~~^^^
+  File "D:\conda\Lib\json\__init__.py", line 298, in load
+    return loads(fp.read(),
+        cls=cls, object_hook=object_hook,
+        parse_float=parse_float, parse_int=parse_int,
+        parse_constant=parse_constant, object_pairs_hook=object_pairs_hook, **kw)
+  File "D:\conda\Lib\json\__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "D:\conda\Lib\json\decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\conda\Lib\json\decoder.py", line 361, in raw_decode
+    obj, end = self.scan_once(s, idx)
+               ~~~~~~~~~~~~~~^^^^^^^^
+json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+

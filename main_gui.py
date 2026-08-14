@@ -38,10 +38,15 @@ from PySide6.QtWidgets import (
     QStackedWidget, QPushButton, QLabel, QComboBox, QLineEdit,
     QTextEdit, QTextBrowser, QCheckBox, QSlider, QFileDialog,
     QMessageBox, QProgressBar, QGroupBox, QFormLayout, QFrame,
+    QListWidget,
     QTabWidget, QSpinBox, QDockWidget, QScrollArea, QSizePolicy,
     QGridLayout, QMenu,
 )
-from PySide6.QtGui import QFont, QIcon, QAction, QPixmap
+from PySide6.QtGui import (
+    QFont, QIcon, QAction, QPixmap,
+    QTextCursor, QTextDocument, QTextBlockFormat,
+    QPalette, QColor,
+)
 
 from business import (
     StudyAssistantHandler,
@@ -58,6 +63,67 @@ def _app_icon() -> QIcon:
         if os.path.isfile(icon_path):
             return QIcon(icon_path)
     return QIcon()
+
+
+def _chat_label_html(
+    text: str,
+    text_color: str = None,
+    link_color: str = "#10a37f",
+    markdown: bool = True,
+) -> str:
+    """Render chat text as compact HTML so bubbles do not look airy."""
+    doc = QTextDocument()
+    if text_color:
+        body_style = f"p, li, h1, h2, h3 {{ color: {text_color}; margin: 0; }}"
+    else:
+        body_style = "p, li, h1, h2, h3 { margin: 0; }"
+    doc.setDefaultStyleSheet(f"{body_style} a {{ color: {link_color}; }}")
+    if markdown:
+        doc.setMarkdown(text)
+    else:
+        doc.setPlainText(text)
+    cursor = QTextCursor(doc)
+    cursor.select(QTextCursor.Document)
+    block_fmt = QTextBlockFormat()
+    block_fmt.setTopMargin(1)
+    block_fmt.setBottomMargin(1)
+    block_fmt.setLineHeight(130.0, QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
+    cursor.mergeBlockFormat(block_fmt)
+    return doc.toHtml()
+
+
+def _make_chat_label(role: str, text: str) -> QLabel:
+    label = QLabel()
+    label.setObjectName("chatBubbleUser" if role == "user" else "chatBubbleAssistant")
+    label.setWordWrap(True)
+    label.setOpenExternalLinks(True)
+    label.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.LinksAccessibleByMouse)
+    label.setMaximumWidth(560)
+    label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+    label.setText(
+        _chat_label_html(
+            text,
+            "#ffffff" if role == "user" else None,
+            "#c7f5e6" if role == "user" else "#10a37f",
+            markdown=(role != "user"),
+        )
+    )
+    label.adjustSize()
+    return label
+
+
+def _apply_compact_markdown(browser: QTextBrowser, text: str = None) -> None:
+    """Tighten block spacing and line height inside a markdown browser."""
+    if text is not None:
+        browser.setMarkdown(text)
+    browser.document().setDocumentMargin(10)
+    cursor = QTextCursor(browser.document())
+    cursor.select(QTextCursor.Document)
+    block_fmt = QTextBlockFormat()
+    block_fmt.setTopMargin(2)
+    block_fmt.setBottomMargin(2)
+    block_fmt.setLineHeight(130.0, QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
+    cursor.mergeBlockFormat(block_fmt)
 
 
 def _state_file() -> str:
@@ -80,7 +146,48 @@ def _legacy_state_file() -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "study_assistant_state.json")
 
 
-def _save_plan_state(handler, analysis, roadmap, resources, quiz="") -> None:
+def _settings_path() -> str:
+    return os.path.join(_app_data_dir(), "settings.json")
+
+
+def _load_settings() -> dict:
+    try:
+        with open(_settings_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_settings(settings: dict) -> None:
+    try:
+        path = _settings_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        existing = _load_settings()
+        existing.update(settings)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+    except Exception:
+        _log_error(traceback.format_exc())
+
+
+def _load_history() -> list:
+    """Return saved generation history, newest first."""
+    try:
+        with open(_state_file(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            history = data.get("history")
+            if isinstance(history, list):
+                return [item for item in history if isinstance(item, dict)]
+    except Exception:
+        pass
+    return []
+
+
+def _save_plan_state(
+    handler, analysis, roadmap, resources, quiz="", record_history=False
+) -> None:
     """Persist the current plan so it can be reopened after restart."""
     data = {
         "topic": handler.topic,
@@ -97,6 +204,21 @@ def _save_plan_state(handler, analysis, roadmap, resources, quiz="") -> None:
         "quiz": quiz,
         "saved_at": datetime.datetime.now().isoformat(timespec="seconds"),
     }
+    history = _load_history()
+    if record_history:
+        entry = {key: data[key] for key in (
+            "topic", "subject_category", "knowledge_level", "learning_goal",
+            "time_available", "learning_style", "model_name", "provider",
+            "analysis", "roadmap", "resources", "quiz", "saved_at",
+        )}
+        history = [entry] + [
+            item for item in history
+            if not (item.get("topic") == entry["topic"]
+                    and item.get("saved_at") == entry["saved_at"])
+        ]
+        data["history"] = history[:20]
+    else:
+        data["history"] = history
     try:
         path = _state_file()
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -145,6 +267,83 @@ def _set_taskbar_app_id() -> None:
         )
     except Exception:
         pass
+
+
+def _apply_titlebar_theme(window, dark: bool) -> None:
+    """Make the native Windows title bar follow the active theme."""
+    if sys.platform != "win32" or window is None:
+        return
+    try:
+        handle = window.windowHandle()
+        if handle is None:
+            return
+        hwnd = int(handle.winId())
+        value = ctypes.c_int(1 if dark else 0)
+        dwmapi = ctypes.windll.dwmapi
+        dwmapi.DwmSetWindowAttribute.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_void_p,
+            ctypes.c_uint,
+        ]
+        dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
+        for attribute in (20, 19):
+            result = dwmapi.DwmSetWindowAttribute(
+                hwnd, attribute, ctypes.byref(value), ctypes.sizeof(value)
+            )
+            if result == 0:
+                break
+        user32 = ctypes.windll.user32
+        user32.SetWindowPos.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        ]
+        user32.SetWindowPos.restype = ctypes.c_int
+        user32.SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020,
+        )
+    except Exception:
+        pass
+
+
+def _apply_theme(dark: bool, window=None) -> None:
+    """Apply light or dark palette plus stylesheet at runtime."""
+    app = QApplication.instance()
+    if app is None:
+        return
+    if dark:
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#17181c"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#1a1b21"))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#1f2026"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#e6e7eb"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#e6e7eb"))
+        palette.setColor(QPalette.ColorRole.Button, QColor("#26272e"))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#e6e7eb"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#10a37f"))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#2c2e35"))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#e6e7eb"))
+        palette.setColor(QPalette.ColorRole.Link, QColor("#4fd1ad"))
+        app.setPalette(palette)
+        app.setStyleSheet(APP_STYLE_SHEET_DARK)
+    else:
+        app.setPalette(app.style().standardPalette())
+        app.setStyleSheet(APP_STYLE_SHEET)
+    _apply_titlebar_theme(window, dark)
+    if window is not None:
+        QTimer.singleShot(50, lambda: _apply_titlebar_theme(window, dark))
 
 
 APP_STYLE_SHEET = """
@@ -215,6 +414,19 @@ QPushButton[card="true"]:hover {
     border-color: #10a37f;
     background-color: #f7fbfa;
 }
+QPushButton#settingsButton {
+    background-color: #f4f4f5;
+    border: 1px solid #d9d9e3;
+    color: #0d0d0d;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-weight: 600;
+    text-align: left;
+}
+QPushButton#settingsButton:hover {
+    background-color: #ececf1;
+    border-color: #c2c2cc;
+}
 QLineEdit, QTextEdit, QTextBrowser, QSpinBox, QComboBox {
     background-color: #ffffff;
     border: 1px solid #d9d9e3;
@@ -249,6 +461,9 @@ QGroupBox::title {
     left: 12px;
     padding: 0 6px;
     color: #0d0d0d;
+}
+QTabWidget {
+    background-color: #ffffff;
 }
 QTabWidget::pane {
     border: 1px solid #e5e5ea;
@@ -302,6 +517,296 @@ QToolTip {
     color: #ffffff;
     border: none;
     padding: 6px 8px;
+}
+QLabel#chatHeader {
+    font-size: 15px;
+    font-weight: 600;
+    color: #0d0d0d;
+}
+QLabel#mutedLabel {
+    color: #6e6e80;
+    font-size: 12px;
+}
+QLabel#chatPlaceholder {
+    color: #b5b5bd;
+    font-size: 13px;
+}
+QLabel#chatBubbleUser {
+    background-color: #10a37f;
+    color: #ffffff;
+    border-radius: 14px;
+    padding: 10px 14px;
+}
+QLabel#chatBubbleAssistant {
+    background-color: #f0f0f4;
+    color: #0d0d0d;
+    border-radius: 14px;
+    padding: 10px 14px;
+}
+QScrollArea#chatScroll {
+    background: transparent;
+    border: none;
+}
+QScrollArea#settingsScroll {
+    background: transparent;
+    border: none;
+}
+QListWidget#historyList {
+    background-color: #ffffff;
+    border: 1px solid #e5e5ea;
+    border-radius: 8px;
+    padding: 4px;
+}
+QListWidget#historyList::item {
+    padding: 8px;
+    border-bottom: 1px solid #f0f0f2;
+}
+QListWidget#historyList::item:selected {
+    background-color: #ececf1;
+    color: #0d0d0d;
+}
+QListWidget#historyList::item:hover {
+    background-color: #f7f7f8;
+}
+QTextBrowser#answerBrowser {
+    background-color: #f7f7f8;
+    border: 1px solid #e8e8ec;
+    border-radius: 12px;
+    padding: 10px 12px;
+}
+"""
+
+APP_STYLE_SHEET_DARK = """
+QMainWindow {
+    background-color: #17181c;
+}
+QWidget {
+    color: #e6e7eb;
+    font-size: 13px;
+}
+QWidget#sidebar {
+    background-color: #1f2026;
+    border-right: 1px solid #2c2e35;
+}
+QStackedWidget {
+    background-color: #17181c;
+}
+QLabel {
+    background: transparent;
+}
+QPushButton {
+    background-color: #26272e;
+    color: #e6e7eb;
+    border: 1px solid #383a42;
+    border-radius: 8px;
+    padding: 7px 16px;
+    font-weight: 500;
+}
+QPushButton:hover {
+    background-color: #2f313a;
+    border-color: #4a4d58;
+}
+QPushButton:pressed {
+    background-color: #3a3c45;
+}
+QPushButton:disabled {
+    color: #6b6e78;
+    background-color: #1f2026;
+    border-color: #2c2e35;
+}
+QPushButton#primaryButton {
+    background-color: #10a37f;
+    color: #ffffff;
+    border: 1px solid #10a37f;
+    border-radius: 8px;
+    padding: 8px 20px;
+    font-weight: 600;
+}
+QPushButton#primaryButton:hover {
+    background-color: #0e8a6d;
+    border-color: #0e8a6d;
+}
+QPushButton#primaryButton:pressed {
+    background-color: #0b7059;
+}
+QPushButton#primaryButton:disabled {
+    background-color: #2c3b37;
+    border-color: #2c3b37;
+    color: #9aa8a3;
+}
+QPushButton[card="true"] {
+    background-color: #1f2026;
+    border: 1px solid #2c2e35;
+    border-radius: 10px;
+    font-size: 14px;
+}
+QPushButton[card="true"]:hover {
+    border-color: #10a37f;
+    background-color: #17251f;
+}
+QPushButton#settingsButton {
+    background-color: #26272e;
+    border: 1px solid #383a42;
+    color: #e6e7eb;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-weight: 600;
+    text-align: left;
+}
+QPushButton#settingsButton:hover {
+    background-color: #2f313a;
+    border-color: #4a4d58;
+}
+QLineEdit, QTextEdit, QTextBrowser, QSpinBox, QComboBox {
+    background-color: #1a1b21;
+    border: 1px solid #383a42;
+    border-radius: 8px;
+    padding: 6px 10px;
+    selection-background-color: #1f5c4b;
+}
+QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus {
+    border-color: #10a37f;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+QComboBox QAbstractItemView {
+    background-color: #1f2026;
+    border: 1px solid #383a42;
+    border-radius: 8px;
+    selection-background-color: #30323b;
+    selection-color: #e6e7eb;
+}
+QGroupBox {
+    background-color: #1f2026;
+    border: 1px solid #2c2e35;
+    border-radius: 10px;
+    margin-top: 12px;
+    padding: 12px;
+    font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+    color: #e6e7eb;
+}
+QTabWidget {
+    background-color: #17181c;
+}
+QTabBar {
+    background-color: #17181c;
+}
+QTabWidget::pane {
+    border: 1px solid #2c2e35;
+    background-color: #17181c;
+    border-radius: 10px;
+    top: -1px;
+}
+QTabBar::tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 10px 16px;
+    color: #9a9da8;
+    font-weight: 500;
+}
+QTabBar::tab:selected {
+    color: #ffffff;
+    border-bottom: 2px solid #10a37f;
+}
+QTabBar::tab:hover {
+    color: #ffffff;
+}
+QProgressBar {
+    background-color: #2c2e35;
+    border: none;
+    border-radius: 6px;
+    min-height: 8px;
+    max-height: 8px;
+    text-align: center;
+    color: transparent;
+}
+QProgressBar::chunk {
+    background-color: #10a37f;
+    border-radius: 6px;
+}
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #454852;
+    border-radius: 5px;
+    min-height: 30px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+QToolTip {
+    background-color: #2c2e35;
+    color: #e6e7eb;
+    border: none;
+    padding: 6px 8px;
+}
+QLabel#chatHeader {
+    font-size: 15px;
+    font-weight: 600;
+    color: #e6e7eb;
+}
+QLabel#mutedLabel {
+    color: #9a9da8;
+    font-size: 12px;
+}
+QLabel#chatPlaceholder {
+    color: #6b6e78;
+    font-size: 13px;
+}
+QLabel#chatBubbleUser {
+    background-color: #10a37f;
+    color: #ffffff;
+    border-radius: 14px;
+    padding: 10px 14px;
+}
+QLabel#chatBubbleAssistant {
+    background-color: #2c2e35;
+    color: #e6e7eb;
+    border-radius: 14px;
+    padding: 10px 14px;
+}
+QScrollArea#chatScroll {
+    background: transparent;
+    border: none;
+}
+QScrollArea#settingsScroll {
+    background: transparent;
+    border: none;
+}
+QListWidget#historyList {
+    background-color: #1a1b21;
+    border: 1px solid #383a42;
+    border-radius: 8px;
+    padding: 4px;
+}
+QListWidget#historyList::item {
+    padding: 8px;
+    border-bottom: 1px solid #2c2e35;
+}
+QListWidget#historyList::item:selected {
+    background-color: #30323b;
+    color: #e6e7eb;
+}
+QListWidget#historyList::item:hover {
+    background-color: #26272e;
+}
+QTextBrowser#answerBrowser {
+    background-color: #1f2026;
+    border: 1px solid #2c2e35;
+    border-radius: 12px;
+    padding: 10px 12px;
+    color: #e6e7eb;
 }
 """
 
@@ -429,6 +934,8 @@ class SidebarWidget(QWidget):
 
     providerChanged = Signal(str)
     apiKeyChanged   = Signal(str, str)   # provider, key
+    themeChanged    = Signal(bool)
+    historySelected = Signal(dict)
 
     MODEL_OPTIONS = {
         "groq":     ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "mixtral-8x7b-32768"],
@@ -449,74 +956,119 @@ class SidebarWidget(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        # ── Title ──
-        title = QLabel("设置")
+        title = QLabel("AI 学习助手")
         title_font = QFont()
-        title_font.setPointSize(14)
+        title_font.setPointSize(15)
         title_font.setBold(True)
         title.setFont(title_font)
         layout.addWidget(title)
 
-        # ── Provider ──
-        layout.addWidget(QLabel("AI 提供商"))
+        subtitle = QLabel("个性化学习规划与 AI 辅导")
+        subtitle.setObjectName("mutedLabel")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        self.settings_btn = QPushButton("设置")
+        self.settings_btn.setObjectName("settingsButton")
+        layout.addWidget(self.settings_btn)
+
+        self.settings_scroll = QScrollArea()
+        self.settings_scroll.setObjectName("settingsScroll")
+        self.settings_scroll.setWidgetResizable(True)
+        self.settings_scroll.setFrameShape(QFrame.NoFrame)
+        self.settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        settings_host = QWidget()
+        settings_layout = QVBoxLayout(settings_host)
+        settings_layout.setContentsMargins(0, 4, 0, 0)
+        settings_layout.setSpacing(10)
+
+        settings_layout.addWidget(QLabel("AI 提供商"))
+
         self.provider_combo = QComboBox()
         self.provider_combo.addItems(["deepseek", "groq", "openai"])
         self.provider_combo.setToolTip(
             "DeepSeek 性价比高、推理能力强。Groq 免费且快速。OpenAI 需要付费 API 密钥。"
         )
-        layout.addWidget(self.provider_combo)
+        settings_layout.addWidget(self.provider_combo)
 
-        # ── Model ──
-        layout.addWidget(QLabel("选择模型"))
+        settings_layout.addWidget(QLabel("选择模型"))
+
         self.model_combo = QComboBox()
         self._update_model_options("deepseek")
-        layout.addWidget(self.model_combo)
+        settings_layout.addWidget(self.model_combo)
 
-        # ── Separator ──
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.HLine)
-        sep1.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep1)
+        settings_layout.addWidget(QLabel("API 密钥"))
 
-        # ── API Key ──
-        layout.addWidget(QLabel("API 密钥"))
         self.api_key_edit = QLineEdit()
         self.api_key_edit.setEchoMode(QLineEdit.Password)
         self.api_key_edit.setPlaceholderText("在此粘贴你的 API 密钥")
         self.api_key_edit.setToolTip("输入所选提供商的 API 密钥。")
-        layout.addWidget(self.api_key_edit)
+        settings_layout.addWidget(self.api_key_edit)
 
-        # ── Separator ──
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.HLine)
-        sep2.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep2)
+        self.dark_mode_check = QCheckBox("深色模式")
+        self.dark_mode_check.setChecked(_load_settings().get("dark_mode", False))
+        settings_layout.addWidget(self.dark_mode_check)
 
-        # ── About ──
-        layout.addWidget(QLabel("关于"))
+        settings_layout.addWidget(QLabel("关于"))
         about_text = QTextBrowser()
         about_text.setOpenExternalLinks(True)
-        about_text.setMaximumHeight(200)
+        about_text.setMaximumHeight(180)
         about_text.setHtml(
-            "<p>AI Study Assistant uses multiple specialized agents to:</p>"
+            "<p>AI 学习助手集成多种智能体，帮助完成：</p>"
             "<ul>"
-            "<li><b>Analyze</b> your learning needs</li>"
-            "<li><b>Create</b> personalized roadmaps</li>"
-            "<li><b>Generate</b> custom quizzes</li>"
-            "<li><b>Tutor</b> you with RAG assistance</li>"
-            "<li><b>Find</b> the best learning resources</li>"
+            "<li><b>分析</b>你的学习需求</li>"
+            "<li><b>制定</b>个性化学习路线</li>"
+            "<li><b>生成</b>定制测验</li>"
+            "<li><b>AI 辅导</b>与文档问答</li>"
+            "<li><b>查找</b>最佳学习资源</li>"
             "</ul>"
-            "<p><b>DeepSeek</b>: Affordable, powerful reasoning (recommended)<br>"
-            "<b>Groq</b>: Free, fast inference<br>"
-            "<b>OpenAI</b>: Requires paid API key</p>"
+            "<p><b>DeepSeek</b>：性价比高、推理能力强<br>"
+            "<b>Groq</b>：免费且响应快<br>"
+            "<b>OpenAI</b>：需要付费 API 密钥</p>"
         )
-        layout.addWidget(about_text)
+        settings_layout.addWidget(about_text)
 
-        layout.addStretch()
+        self.settings_scroll.setWidget(settings_host)
+        layout.addWidget(self.settings_scroll)
+        self.settings_scroll.setVisible(False)
+
+        history_label = QLabel("历史生成")
+        history_label.setObjectName("mutedLabel")
+        layout.addWidget(history_label)
+
+        self.history_list = QListWidget()
+        self.history_list.setObjectName("historyList")
+        layout.addWidget(self.history_list, 1)
+        self.refresh_history()
+
+    def _toggle_settings(self):
+        visible = not self.settings_scroll.isVisible()
+        self.settings_scroll.setVisible(visible)
+        self.settings_btn.setText("收起设置" if visible else "设置")
+
+    def refresh_history(self):
+        if not hasattr(self, "history_list"):
+            return
+        self.history_list.clear()
+        for entry in _load_history():
+            topic = entry.get("topic") or "未命名计划"
+            when = (entry.get("saved_at") or "")[:16].replace("T", " ")
+            self.history_list.addItem(f"{topic}  {when}")
+            index = self.history_list.count() - 1
+            self.history_list.item(index).setData(Qt.UserRole, entry)
+
+    def _on_history_clicked(self, item):
+        entry = item.data(Qt.UserRole)
+        if isinstance(entry, dict):
+            self.historySelected.emit(entry)
 
     def _connect_signals(self):
+        self.settings_btn.clicked.connect(self._toggle_settings)
         self.provider_combo.currentTextChanged.connect(self._on_provider_changed)
         self.api_key_edit.textChanged.connect(self._on_api_key_changed)
+        self.dark_mode_check.toggled.connect(self.themeChanged.emit)
+        self.history_list.itemClicked.connect(self._on_history_clicked)
 
     def _on_provider_changed(self, provider: str):
         self._update_model_options(provider)
@@ -942,6 +1494,7 @@ class DashboardWidget(QWidget):
         self._current_quiz = quiz
         self._tutor_response = ""
         self._rag_answer = ""
+        self._chat_messages: list[tuple[str, str]] = []
         self._build_ui()
         if quiz:
             self.quiz_browser.setMarkdown(quiz)
@@ -1150,44 +1703,116 @@ class DashboardWidget(QWidget):
     def _build_tutor_tab(self):
         w = QWidget()
         layout = QVBoxLayout(w)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        layout.addWidget(QLabel("向你的 AI 导师提问"))
-        desc = QLabel("获取针对你问题的个性化讲解与帮助。")
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
+        header = QLabel("AI 辅导")
+        header.setObjectName("chatHeader")
+        header.setContentsMargins(18, 14, 18, 6)
+        layout.addWidget(header)
 
+        self.tutor_scroll = QScrollArea()
+        self.tutor_scroll.setObjectName("chatScroll")
+        self.tutor_scroll.setWidgetResizable(True)
+        self.tutor_scroll.setFrameShape(QFrame.NoFrame)
+
+        chat_host = QWidget()
+        self.tutor_chat_layout = QVBoxLayout(chat_host)
+        self.tutor_chat_layout.setContentsMargins(16, 8, 16, 8)
+        self.tutor_chat_layout.setSpacing(10)
+
+        self._tutor_placeholder = QLabel("向 AI 导师提问，获得个性化讲解与帮助")
+        self._tutor_placeholder.setObjectName("chatPlaceholder")
+        self._tutor_placeholder.setAlignment(Qt.AlignCenter)
+        self._tutor_placeholder.setWordWrap(True)
+        self.tutor_chat_layout.addWidget(self._tutor_placeholder)
+        self.tutor_chat_layout.addStretch(1)
+
+        self.tutor_scroll.setWidget(chat_host)
+        layout.addWidget(self.tutor_scroll, 1)
+
+        context_row = QHBoxLayout()
+        context_row.setContentsMargins(16, 4, 16, 0)
+        self.tutor_context = QLineEdit()
+        self.tutor_context.setPlaceholderText("补充背景（可选）")
+        context_row.addWidget(self.tutor_context, 1)
+        layout.addLayout(context_row)
+
+        input_row = QHBoxLayout()
+        input_row.setContentsMargins(16, 8, 16, 12)
+        input_row.setSpacing(8)
         self.tutor_question = QTextEdit()
         self.tutor_question.setPlaceholderText("例如：能举一个例子解释递归吗？")
-        self.tutor_question.setMaximumHeight(80)
-        layout.addWidget(self.tutor_question)
+        self.tutor_question.setMaximumHeight(84)
+        input_row.addWidget(self.tutor_question, 1)
 
-        self.tutor_context = QLineEdit()
-        self.tutor_context.setPlaceholderText("补充背景（可选） — e.g., I'm working on a specific problem...")
-        layout.addWidget(self.tutor_context)
-
-        ask_btn = QPushButton(" 提问")
+        ask_btn = QPushButton("发送")
         ask_btn.setObjectName("primaryButton")
+        ask_btn.setMinimumWidth(84)
         ask_btn.clicked.connect(self._ask_tutor)
-        layout.addWidget(ask_btn)
-
-        self.tutor_response_label = QLabel("###  导师回答：")
-        tf = QFont()
-        tf.setBold(True)
-        self.tutor_response_label.setFont(tf)
-        self.tutor_response_label.setVisible(False)
-        layout.addWidget(self.tutor_response_label)
-
-        self.tutor_browser = QTextBrowser()
-        self.tutor_browser.setVisible(False)
-        layout.addWidget(self.tutor_browser)
+        input_row.addWidget(ask_btn, 0, Qt.AlignBottom)
+        layout.addLayout(input_row)
 
         return w
+
+    def _append_chat_message(self, role: str, text: str) -> None:
+        self._chat_messages.append((role, text))
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        bubble = _make_chat_label(role, text)
+
+        if role == "user":
+            row.addStretch(1)
+            row.addWidget(bubble, 0, Qt.AlignRight)
+        else:
+            row.addWidget(bubble, 0, Qt.AlignLeft)
+            row.addStretch(1)
+
+        self._tutor_placeholder.setVisible(False)
+        self.tutor_chat_layout.insertLayout(
+            max(0, self.tutor_chat_layout.count() - 1), row
+        )
+        QTimer.singleShot(0, self._scroll_tutor_to_bottom)
+
+    def _rebuild_chat_messages(self) -> None:
+        if not hasattr(self, "tutor_chat_layout"):
+            return
+        while self.tutor_chat_layout.count() > 2:
+            item = self.tutor_chat_layout.takeAt(1)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                while item.layout().count():
+                    child = item.layout().takeAt(0)
+                    widget = child.widget()
+                    if widget:
+                        widget.deleteLater()
+        messages = list(self._chat_messages)
+        self._chat_messages.clear()
+        for role, text in messages:
+            self._append_chat_message(role, text)
+
+    def refresh_theme(self) -> None:
+        """Re-render markdown views so palette colors match the active theme."""
+        self.roadmap_browser.setMarkdown(self._roadmap)
+        self.resources_browser.setMarkdown(self._resources)
+        self.quiz_browser.setMarkdown(self._current_quiz)
+        if self._rag_answer:
+            _apply_compact_markdown(self.rag_browser, self._rag_answer)
+        self._rebuild_chat_messages()
+
+    def _scroll_tutor_to_bottom(self) -> None:
+        bar = self.tutor_scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
 
     def _ask_tutor(self):
         question = self.tutor_question.toPlainText().strip()
         if not question:
             return
         context = self.tutor_context.text().strip()
+        self._append_chat_message("user", question)
+        self.tutor_question.clear()
         self._run_worker(
             self._handler.get_tutoring, question, context,
             callback=self._on_tutor_response
@@ -1195,33 +1820,38 @@ class DashboardWidget(QWidget):
 
     def _on_tutor_response(self, result):
         self._tutor_response = result
-        self.tutor_response_label.setVisible(True)
-        self.tutor_browser.setVisible(True)
-        self.tutor_browser.setMarkdown(result)
+        self._append_chat_message("assistant", result)
 
     # ── Tab 5: Document Q&A (RAG) ──
     def _build_rag_tab(self):
         w = QWidget()
         layout = QVBoxLayout(w)
+        layout.setContentsMargins(16, 14, 16, 16)
+        layout.setSpacing(8)
 
-        layout.addWidget(QLabel("上传学习资料并提问"))
-        desc = QLabel("上传 PDF 或文本文件，使用 RAG 技术向文件内容提问。")
-        desc.setWordWrap(True)
+        header = QLabel("文档问答 (RAG)")
+        header.setObjectName("chatHeader")
+        layout.addWidget(header)
+
+        desc = QLabel("上传 PDF 或文本文件，向文件内容提问")
+        desc.setObjectName("mutedLabel")
         layout.addWidget(desc)
 
         # File upload row
         upload_row = QHBoxLayout()
+        upload_row.setSpacing(8)
 
-        upload_btn = QPushButton("📂 选择文件上传")
+        upload_btn = QPushButton("选择文件上传")
         upload_btn.clicked.connect(self._upload_files)
         upload_row.addWidget(upload_btn)
 
         self.doc_count_label = QLabel("已加载文档: 0")
+        self.doc_count_label.setObjectName("mutedLabel")
         upload_row.addWidget(self.doc_count_label)
 
         upload_row.addStretch()
 
-        clear_btn = QPushButton("🗑️ 清空所有文档")
+        clear_btn = QPushButton("清空文档")
         clear_btn.clicked.connect(self._clear_documents)
         upload_row.addWidget(clear_btn)
 
@@ -1232,33 +1862,24 @@ class DashboardWidget(QWidget):
         self.upload_status.setVisible(False)
         layout.addWidget(self.upload_status)
 
-        # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        layout.addWidget(sep)
-
-        # Question area
-        layout.addWidget(QLabel(" 就你的文档提问"))
+        question_row = QHBoxLayout()
+        question_row.setSpacing(8)
         self.rag_question = QTextEdit()
-        self.rag_question.setPlaceholderText("例如：第 3 章的核心概念是什么？")
+        self.rag_question.setPlaceholderText("例如：第 2 章的核心概念是什么？")
         self.rag_question.setMaximumHeight(80)
-        layout.addWidget(self.rag_question)
+        question_row.addWidget(self.rag_question, 1)
 
-        search_btn = QPushButton(" 搜索文档")
+        search_btn = QPushButton("搜索")
         search_btn.setObjectName("primaryButton")
         search_btn.clicked.connect(self._search_documents)
-        layout.addWidget(search_btn)
-
-        self.rag_answer_label = QLabel("### 📖 文档回答：")
-        rf = QFont()
-        rf.setBold(True)
-        self.rag_answer_label.setFont(rf)
-        self.rag_answer_label.setVisible(False)
-        layout.addWidget(self.rag_answer_label)
+        search_btn.setMinimumWidth(84)
+        question_row.addWidget(search_btn, 0, Qt.AlignBottom)
+        layout.addLayout(question_row)
 
         self.rag_browser = QTextBrowser()
+        self.rag_browser.setObjectName("answerBrowser")
         self.rag_browser.setVisible(False)
-        layout.addWidget(self.rag_browser)
+        layout.addWidget(self.rag_browser, 1)
 
         self._update_doc_count()
         return w
@@ -1311,9 +1932,8 @@ class DashboardWidget(QWidget):
 
     def _on_rag_answer(self, result):
         self._rag_answer = result
-        self.rag_answer_label.setVisible(True)
         self.rag_browser.setVisible(True)
-        self.rag_browser.setMarkdown(result)
+        _apply_compact_markdown(self.rag_browser, result)
 
     # ── Generic worker helper ──
     def _run_worker(self, fn, *args, callback=None):
@@ -1355,6 +1975,7 @@ class MainWindow(QMainWindow):
         # ── state (replaces st.session_state) ──
         self._category = ""
         self._handler: Optional[StudyAssistantHandler] = None
+        self.step4 = None
 
         # ── central layout: sidebar | stacked widget ──
         central = QWidget()
@@ -1408,6 +2029,52 @@ class MainWindow(QMainWindow):
         self.sidebar.apiKeyChanged.connect(
             lambda provider, key: set_api_key_env(provider, key) if key else None
         )
+        self.sidebar.themeChanged.connect(self._on_theme_changed)
+        self.sidebar.historySelected.connect(self._open_history_plan)
+
+    def _on_theme_changed(self, dark: bool):
+        _apply_theme(dark, self)
+        _save_settings({"dark_mode": dark})
+        if self.step4 is not None:
+            self.step4.refresh_theme()
+
+    def _open_history_plan(self, state: dict):
+        try:
+            handler = StudyAssistantHandler(
+                topic=state["topic"],
+                subject_category=state.get("subject_category", ""),
+                knowledge_level=state.get("knowledge_level", "beginner"),
+                learning_goal=state.get("learning_goal", ""),
+                time_available=state.get("time_available", ""),
+                learning_style=state.get("learning_style", ""),
+                model_name=state.get("model_name", "deepseek-chat"),
+                provider=state.get("provider", "deepseek"),
+            )
+        except Exception:
+            _log_error(traceback.format_exc())
+            QMessageBox.critical(self, "加载失败", "这条历史记录无法打开。")
+            return
+        self._category = state.get("subject_category", "")
+        self.sidebar.set_provider_model(
+            state.get("provider", "deepseek"),
+            state.get("model_name", "deepseek-chat"),
+        )
+        dashboard = DashboardWidget(
+            handler,
+            state.get("analysis", ""),
+            state.get("roadmap", ""),
+            state.get("resources", ""),
+            quiz=state.get("quiz", ""),
+        )
+        dashboard.resetRequested.connect(self._reset_all)
+        if self.step4 is not None:
+            index = self.stack.indexOf(self.step4)
+            if index >= 0:
+                self.stack.removeWidget(self.step4)
+                self.step4.deleteLater()
+        self.step4 = dashboard
+        self.stack.addWidget(dashboard)
+        self.stack.setCurrentWidget(dashboard)
 
     # ── slot: restore last saved plan ──
     def _maybe_restore_plan(self):
@@ -1448,6 +2115,7 @@ class MainWindow(QMainWindow):
             quiz=state.get("quiz", ""),
         )
         dashboard.resetRequested.connect(self._reset_all)
+        self.step4 = dashboard
         self.stack.addWidget(dashboard)
         self.stack.setCurrentWidget(dashboard)
 
@@ -1517,7 +2185,9 @@ class MainWindow(QMainWindow):
             results["analysis"],
             results["roadmap"],
             results["resources"],
+            record_history=True,
         )
+        self.sidebar.refresh_history()
 
     # ── slot: generation error ──
     def _on_generation_error(self, msg: str):
@@ -1542,6 +2212,7 @@ class MainWindow(QMainWindow):
             w = self.stack.widget(3)
             self.stack.removeWidget(w)
             w.deleteLater()
+        self.step4 = None
 
         self.stack.insertWidget(1, self.step2)
         self.stack.insertWidget(2, self.step3)
@@ -1564,13 +2235,16 @@ def main():
     app.setApplicationDisplayName("StudyAssistant")
     app.setStyle("Fusion")
     app.setFont(QFont("Microsoft YaHei UI", 10))
-    app.setStyleSheet(APP_STYLE_SHEET)
+    dark = bool(_load_settings().get("dark_mode", False))
+    _apply_theme(dark)
     app.installEventFilter(ChineseContextMenuFilter(app))
     window = MainWindow()
     window.setWindowIcon(icon)
     window.show()
     if window.windowHandle() is not None:
         window.windowHandle().setIcon(icon)
+    _apply_titlebar_theme(window, dark)
+    QTimer.singleShot(50, lambda: _apply_titlebar_theme(window, dark))
     app.setWindowIcon(icon)
     sys.exit(app.exec())
 
