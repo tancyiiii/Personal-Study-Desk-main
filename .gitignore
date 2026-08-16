@@ -46,3 +46,8 @@ uploaded_docs/
 *.docx
 *.txt
 !requirements.txt
+study_assistant.log
+study_assistant_state.json
+dist.zip
+*.onnx
+assets/models/*/.cache/

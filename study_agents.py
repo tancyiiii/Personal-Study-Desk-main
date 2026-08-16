@@ -1,39 +1,18 @@
 from phi.agent import Agent
 from phi.model.openai import OpenAIChat
 from phi.model.groq import Groq
-from phi.tools import Toolkit
-from duckduckgo_search import DDGS
-import json
 import yaml
 import os
+
 from resource_path import resource_path
-
-
-class ChineseDuckDuckGo(Toolkit):
-    """DuckDuckGo search that prefers Simplified Chinese results."""
-
-    def __init__(self, max_results: int = 8):
-        super().__init__(name="chinese_duckduckgo")
-        self.max_results = max_results
-        self.register(self.search_chinese)
-
-    def search_chinese(self, query: str) -> str:
-        """Search DuckDuckGo with Simplified Chinese region settings."""
-        try:
-            ddgs = DDGS()
-            results = list(ddgs.text(
-                keywords=query,
-                region="cn-zh",
-                max_results=self.max_results,
-            ))
-            return json.dumps(results, ensure_ascii=False, indent=2)
-        except Exception as exc:
-            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+from search_tools import ChineseSearchTool
+from schemas import QuizSet
 
 
 class StudyAgents:
     def __init__(self, topic, subject_category, knowledge_level, learning_goal, 
-        time_available, learning_style, model_name="deepseek-chat", provider="deepseek"):
+        time_available, learning_style, model_name="deepseek-chat", provider="deepseek",
+        trace_callback=None):
         """
         Initialize study assistant agents with student information and model configuration.
         
@@ -55,6 +34,7 @@ class StudyAgents:
         self.learning_style = learning_style
         self.model_name = model_name
         self.provider = provider
+        self.trace_callback = trace_callback
         self.personas = self._load_personas()
     
     def _load_personas(self):
@@ -90,7 +70,11 @@ class StudyAgents:
             Model: The configured model instance
         """
         if self.provider == "groq":
-            return Groq(id=self.model_name, temperature=temperature)
+            return Groq(
+                id=self.model_name,
+                temperature=temperature,
+                api_key=os.getenv("GROQ_API_KEY", "").strip() or None,
+            )
         elif self.provider == "deepseek":
             api_key = os.getenv("DEEPSEEK_API_KEY", "").strip() or None
             return OpenAIChat(
@@ -159,7 +143,7 @@ class StudyAgents:
             system_prompt=full_prompt
         )
     
-    def quiz_generator_agent(self):
+    def quiz_generator_agent(self, structured: bool = False):
         """
         Create a quiz generator agent that creates assessments and practice questions.
         
@@ -178,12 +162,16 @@ class StudyAgents:
         progress toward their goal: {self.learning_goal}
         """
         
-        return Agent(
-            model=self._get_model(temperature=0.5),
-            system_prompt=full_prompt
-        )
+        agent_kwargs = {
+            "model": self._get_model(temperature=0.4),
+            "system_prompt": full_prompt,
+        }
+        if structured:
+            agent_kwargs["output_model"] = QuizSet
+            agent_kwargs["structured_outputs"] = False
+        return Agent(**agent_kwargs)
     
-    def tutor_agent(self):
+    def tutor_agent(self, persistent: bool = False):
         """
         Create a tutor agent that explains concepts and answers questions.
         
@@ -204,10 +192,17 @@ class StudyAgents:
         Adapt your explanations to match their learning style and knowledge level.
         """
         
-        return Agent(
-            model=self._get_model(temperature=0.7),
-            system_prompt=full_prompt
-        )
+        agent_kwargs = {
+            "model": self._get_model(temperature=0.7),
+            "system_prompt": full_prompt,
+        }
+        if persistent:
+            agent_kwargs.update(
+                add_chat_history_to_messages=True,
+                num_history_responses=8,
+                read_chat_history=True,
+            )
+        return Agent(**agent_kwargs)
     
     def resource_finder_agent(self):
         """
@@ -240,10 +235,13 @@ class StudyAgents:
         return Agent(
             model=self._get_model(temperature=0.6),
             system_prompt=full_prompt,
-            tools=[ChineseDuckDuckGo()]
+            tools=[ChineseSearchTool(
+                max_results=8,
+                trace_callback=self.trace_callback,
+            )]
         )
     
-    def rag_tutor_agent(self, knowledge_base=None):
+    def rag_tutor_agent(self, knowledge_base=None, persistent: bool = False):
         """
         Create a RAG-enabled tutor agent that can answer questions using uploaded documents.
         
@@ -272,6 +270,12 @@ class StudyAgents:
             "model": self._get_model(temperature=0.6),
             "system_prompt": full_prompt
         }
+        if persistent:
+            agent_config.update(
+                add_chat_history_to_messages=True,
+                num_history_responses=6,
+                read_chat_history=True,
+            )
         
         # Add knowledge base if provided
         if knowledge_base:

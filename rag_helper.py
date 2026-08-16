@@ -1,13 +1,16 @@
+import hashlib
 import os
 import sys
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+
 from phi.knowledge.pdf import PDFUrlKnowledgeBase, PDFKnowledgeBase
 from phi.vectordb.chroma import ChromaDb
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
-from langchain_community.embeddings import OpenAIEmbeddings
 import chromadb
+
+from local_embeddings import LocalChineseEmbeddings
 
 
 def _default_persist_directory() -> str:
@@ -22,7 +25,7 @@ class RAGHelper:
     Manages document loading, embedding, and retrieval.
     """
     
-    def __init__(self, collection_name: str = "study_materials", persist_directory: Optional[str] = None):
+    def __init__(self, collection_name: str = "study_materials_bge", persist_directory: Optional[str] = None):
         """
         Initialize the RAG helper.
         
@@ -32,7 +35,7 @@ class RAGHelper:
         """
         self.collection_name = collection_name
         self.persist_directory = persist_directory or _default_persist_directory()
-        self.embeddings = OpenAIEmbeddings()
+        self.embeddings = LocalChineseEmbeddings()
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
@@ -72,13 +75,17 @@ class RAGHelper:
         try:
             loader = PyPDFLoader(file_path)
             documents = loader.load()
+            source_name = os.path.basename(file_path)
+            for document in documents:
+                document.metadata["source"] = source_name
+                document.metadata.setdefault("page", 0)
             
             # Split documents into chunks
             chunks = self.text_splitter.split_documents(documents)
             
             # Add to vector store
             if self.vectorstore:
-                self.vectorstore.add_documents(chunks)
+                self._add_documents(chunks)
                 return True
             return False
         except Exception as e:
@@ -96,15 +103,19 @@ class RAGHelper:
             bool: True if successful, False otherwise
         """
         try:
-            loader = TextLoader(file_path)
+            loader = TextLoader(file_path, encoding="utf-8")
             documents = loader.load()
+            source_name = os.path.basename(file_path)
+            for document in documents:
+                document.metadata["source"] = source_name
+                document.metadata.setdefault("page", 0)
             
             # Split documents into chunks
             chunks = self.text_splitter.split_documents(documents)
             
             # Add to vector store
             if self.vectorstore:
-                self.vectorstore.add_documents(chunks)
+                self._add_documents(chunks)
                 return True
             return False
         except Exception as e:
@@ -133,7 +144,7 @@ class RAGHelper:
             
             # Add to vector store
             if self.vectorstore:
-                self.vectorstore.add_documents(chunks)
+                self._add_documents(chunks)
                 return True
             return False
         except Exception as e:
@@ -186,6 +197,54 @@ class RAGHelper:
         except Exception as e:
             print(f"Error querying knowledge base: {e}")
             return []
+
+    def query_with_metadata(self, question: str, k: int = 4) -> List[Dict[str, Any]]:
+        """Retrieve relevant chunks with source and page metadata."""
+        try:
+            if not self.vectorstore:
+                return []
+            docs = self.vectorstore.similarity_search(question, k=k)
+            return [
+                {
+                    "content": doc.page_content,
+                    "source": doc.metadata.get("source", "未命名文档"),
+                    "page": doc.metadata.get("page", 0),
+                }
+                for doc in docs
+            ]
+        except Exception as e:
+            print(f"Error querying knowledge base with metadata: {e}")
+            return []
+
+    def _chunk_id(self, chunk) -> str:
+        source = chunk.metadata.get("source", "unknown")
+        page = str(chunk.metadata.get("page", "0"))
+        content = chunk.page_content[:120]
+        digest = hashlib.sha1(
+            f"{source}|{page}|{content}".encode("utf-8")
+        ).hexdigest()
+        return digest
+
+    def _add_documents(self, chunks) -> None:
+        """Add only chunks not already present, keyed by a stable hash."""
+        if not chunks:
+            return
+        ids = [self._chunk_id(chunk) for chunk in chunks]
+        try:
+            existing = self.vectorstore.get(ids=ids)
+            existing_ids = set(existing.get("ids", []))
+        except Exception:
+            existing_ids = set()
+        new_chunks = [
+            (chunk, chunk_id)
+            for chunk, chunk_id in zip(chunks, ids)
+            if chunk_id not in existing_ids
+        ]
+        if new_chunks:
+            self.vectorstore.add_documents(
+                [item[0] for item in new_chunks],
+                ids=[item[1] for item in new_chunks],
+            )
     
     def clear_database(self) -> bool:
         """

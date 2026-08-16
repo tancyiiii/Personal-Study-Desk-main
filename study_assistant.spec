@@ -9,21 +9,27 @@ if os.path.exists("assets/icon.png"):
     datas.append(("assets/icon.png", "assets"))
 if os.path.exists("assets/icon.ico"):
     datas.append(("assets/icon.ico", "assets"))
-if os.path.exists("assets/fonts/SmileySans-Oblique.ttf"):
-    datas.append(("assets/fonts/SmileySans-Oblique.ttf", "assets/fonts"))
+if os.path.exists("assets/fonts/LXGWNeoXiHei.ttf"):
+    datas.append(("assets/fonts/LXGWNeoXiHei.ttf", "assets/fonts"))
+for font_name in ("AnthropicSans.ttf", "AnthropicSerif.ttf", "AnthropicMono.ttf"):
+    if os.path.exists(os.path.join("assets", "fonts", font_name)):
+        datas.append((os.path.join("assets", "fonts", font_name), "assets/fonts"))
+if os.path.exists("assets/models/bge-small-zh-v1.5"):
+    datas.append(("assets/models/bge-small-zh-v1.5", "assets/models/bge-small-zh-v1.5"))
 binaries = []
 hiddenimports = [
     "langchain_community.document_loaders.pdf",
     "langchain_community.document_loaders.text",
-    "langchain_community.embeddings.openai",
     "langchain_chroma",
-    "duckduckgo_search",
     "groq",
     "openai",
     "pypdf",
+    "onnxruntime",
+    "tokenizers",
+    "langchain_core.embeddings",
 ]
 
-for package in ("phi", "chromadb"):
+for package in ("phi", "chromadb", "onnxruntime", "tokenizers"):
     package_datas, package_binaries, package_hidden = collect_all(package)
     datas += package_datas
     binaries += package_binaries
@@ -38,7 +44,6 @@ for distribution in (
     "langchain-core",
     "openai",
     "groq",
-    "duckduckgo-search",
     "pydantic",
     "PyYAML",
     "python-dotenv",
